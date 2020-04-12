@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "config.h"
 
 const int LED_WIFI = 2;
 const int sensor_pin = 5; // D1 pin - Use external pull-up resistor
@@ -6,6 +7,7 @@ bool previous_level = true;
 bool current_level = true;
 int total_n_pulses_detected = 0;
 int previous_n_pulses_detected = 0;
+const int debounce_time = DEBOUNCE_TIME;
 unsigned long end_debounce_timestamp;
 bool waiting_for_debounce = false;
 
@@ -22,7 +24,7 @@ void loop()
   {
     if (current_level != previous_level)
     {
-      end_debounce_timestamp = millis() + 50;
+      end_debounce_timestamp = millis() + debounce_time;
       waiting_for_debounce = true;
     }
   }
