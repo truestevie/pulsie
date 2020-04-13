@@ -10,6 +10,8 @@ int previous_n_pulses_detected = 0;
 const int debounce_time = DEBOUNCE_TIME;
 volatile unsigned long end_debounce_timestamp; //Value changes in interrupt service routine, hence volatile
 volatile bool waiting_for_debounce = false;    //Value changes in interrupt service routine, hence volatile
+unsigned long next_reporting_timestamp = 0;
+const int reporting_interval = REPORTING_INTERVAL;
 
 void ICACHE_RAM_ATTR handlePulse() //Interrupt service routine, hence add ICACHE_RAM_ATTR attribute
 {
@@ -41,14 +43,19 @@ void followUpPulse()
   }
 }
 
-void printNumberOfCountedPulses()
+unsigned long reportNumberOfCountedPulses(const int reportInterval, unsigned long next_reporting_timestamp)
 {
-  if (previous_n_pulses_detected != total_n_pulses_detected)
+  if (next_reporting_timestamp < millis())
   {
-    Serial.print("Total number of detected pulses: ");
-    Serial.println(total_n_pulses_detected);
+    if (previous_n_pulses_detected != total_n_pulses_detected)
+    {
+      Serial.print("Total number of detected pulses: ");
+      Serial.println(total_n_pulses_detected);
+    }
+    previous_n_pulses_detected = total_n_pulses_detected;
+    next_reporting_timestamp = millis() + reportInterval;
   }
-  previous_n_pulses_detected = total_n_pulses_detected;
+  return next_reporting_timestamp;
 }
 
 void setup()
@@ -61,5 +68,5 @@ void setup()
 void loop()
 {
   followUpPulse();
-  printNumberOfCountedPulses();
+  next_reporting_timestamp = reportNumberOfCountedPulses(reporting_interval, next_reporting_timestamp);
 }
