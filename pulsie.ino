@@ -2,6 +2,9 @@
 #include "config.h"
 
 const int LED_WIFI = 2;
+const int LED_MAIN = 16;
+bool led_main_on;
+unsigned long timestamp_led_main_off = 0;
 const int sensor_pin = 5; // D1 pin - Use external pull-up resistor
 bool previous_level = true;
 volatile bool current_level = true; //Value changes in interrupt service routine, hence volatile
@@ -37,6 +40,9 @@ void followUpPulse()
       if (current_level == LOW && previous_level == HIGH)
       {
         total_n_pulses_detected++;
+        digitalWrite(LED_MAIN, LOW);
+        led_main_on=true;
+        timestamp_led_main_off = millis() + 100;
       }
       previous_level = current_level;
     }
@@ -58,15 +64,28 @@ unsigned long reportNumberOfCountedPulses(const int reportInterval, unsigned lon
   return next_reporting_timestamp;
 }
 
+void dimLeds()
+{
+  if (led_main_on && timestamp_led_main_off < millis())
+  {
+    digitalWrite(LED_MAIN, HIGH);
+  }
+}
+
 void setup()
 {
   Serial.begin(9600);
+  pinMode(LED_MAIN, OUTPUT);
   pinMode(LED_WIFI, OUTPUT);
+  digitalWrite(LED_MAIN, HIGH);
+  digitalWrite(LED_WIFI, HIGH);
+  led_main_on=false;
   attachInterrupt(sensor_pin, handlePulse, CHANGE);
 }
 
 void loop()
 {
   followUpPulse();
+  dimLeds();
   next_reporting_timestamp = reportNumberOfCountedPulses(reporting_interval, next_reporting_timestamp);
 }
