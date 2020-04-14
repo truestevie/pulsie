@@ -1,29 +1,29 @@
 #include <ESP8266WiFi.h>
 #include "config.h"
 
-const int LED_WIFI = 2;
-const int LED_MAIN = 16;
-bool led_main_on;
-unsigned long timestamp_led_main_off = 0;
-const int sensor_pin = 5; // D1 pin - Use external pull-up resistor
+const int LED_WIFI_PIN = 2;
+const int LED_MAIN_PIN = 16;
+bool led_main_is_on;
+unsigned long led_main_timestamp_off = 0;
+const int SENSOR_PIN = 5; // D1 pin - Use external pull-up resistor
 bool previous_level = true;
 volatile bool current_level = true; //Value changes in interrupt service routine, hence volatile
 int total_n_pulses_detected = 0;
 int previous_n_pulses_detected = 0;
-const int debounce_time = DEBOUNCE_TIME;
+const int DEBOUNCE_TIME = CONFIG_DEBOUNCE_TIME;
 volatile unsigned long end_debounce_timestamp; //Value changes in interrupt service routine, hence volatile
 volatile bool waiting_for_debounce = false;    //Value changes in interrupt service routine, hence volatile
 unsigned long next_reporting_timestamp = 0;
-const int reporting_interval = REPORTING_INTERVAL;
+const int REPORTING_INTERVAL = CONFIG_REPORTING_INTERVAL;
 
 void ICACHE_RAM_ATTR handlePulse() //Interrupt service routine, hence add ICACHE_RAM_ATTR attribute
 {
-  current_level = digitalRead(sensor_pin);
+  current_level = digitalRead(SENSOR_PIN);
   if (!waiting_for_debounce)
   {
     if (current_level != previous_level)
     {
-      end_debounce_timestamp = millis() + debounce_time;
+      end_debounce_timestamp = millis() + DEBOUNCE_TIME;
       waiting_for_debounce = true;
     }
   }
@@ -35,14 +35,14 @@ void followUpPulse()
   {
     if (end_debounce_timestamp < millis())
     {
-      current_level = digitalRead(sensor_pin);
+      current_level = digitalRead(SENSOR_PIN);
       waiting_for_debounce = false;
       if (current_level == LOW && previous_level == HIGH)
       {
         total_n_pulses_detected++;
-        digitalWrite(LED_MAIN, LOW);
-        led_main_on=true;
-        timestamp_led_main_off = millis() + 100;
+        digitalWrite(LED_MAIN_PIN, LOW);
+        led_main_is_on=true;
+        led_main_timestamp_off = millis() + 100;
       }
       previous_level = current_level;
     }
@@ -66,26 +66,26 @@ unsigned long reportNumberOfCountedPulses(const int reportInterval, unsigned lon
 
 void dimLeds()
 {
-  if (led_main_on && timestamp_led_main_off < millis())
+  if (led_main_is_on && led_main_timestamp_off < millis())
   {
-    digitalWrite(LED_MAIN, HIGH);
+    digitalWrite(LED_MAIN_PIN, HIGH);
   }
 }
 
 void setup()
 {
   Serial.begin(9600);
-  pinMode(LED_MAIN, OUTPUT);
-  pinMode(LED_WIFI, OUTPUT);
-  digitalWrite(LED_MAIN, HIGH);
-  digitalWrite(LED_WIFI, HIGH);
-  led_main_on=false;
-  attachInterrupt(sensor_pin, handlePulse, CHANGE);
+  pinMode(LED_MAIN_PIN, OUTPUT);
+  pinMode(LED_WIFI_PIN, OUTPUT);
+  digitalWrite(LED_MAIN_PIN, HIGH);
+  digitalWrite(LED_WIFI_PIN, HIGH);
+  led_main_is_on=false;
+  attachInterrupt(SENSOR_PIN, handlePulse, CHANGE);
 }
 
 void loop()
 {
   followUpPulse();
   dimLeds();
-  next_reporting_timestamp = reportNumberOfCountedPulses(reporting_interval, next_reporting_timestamp);
+  next_reporting_timestamp = reportNumberOfCountedPulses(REPORTING_INTERVAL, next_reporting_timestamp);
 }
