@@ -16,6 +16,7 @@ const int REPORTING_INTERVAL = CONFIG_REPORTING_INTERVAL;
 const String WIFI_SSID = CONFIG_WIFI_SSID;
 const String WIFI_PASSWORD = CONFIG_WIFI_PASSWORD;
 wl_status_t previous_wifi_status = WL_DISCONNECTED;
+wl_status_t current_wifi_status;
 
 class Led
 {
@@ -48,7 +49,7 @@ public:
   {
     if (mode == "blink")
     {
-      if (remaining_number_of_blinks > 0)
+      if (remaining_number_of_blinks > 0 || remaining_number_of_blinks == -1)
       {
         simplyOn();
         switchOffAt = millis() + on_duration;
@@ -73,8 +74,11 @@ public:
 
     if (mode == "blink")
     {
-      remaining_number_of_blinks--;
-      if (remaining_number_of_blinks > 0)
+      if (remaining_number_of_blinks != -1)
+      {
+        remaining_number_of_blinks--;
+      }
+      if (remaining_number_of_blinks > 0 || remaining_number_of_blinks == -1)
       {
         switchOnAt = millis() + off_duration;
       }
@@ -95,6 +99,12 @@ public:
     on();
   }
 
+  void constant_on()
+  {
+    mode = "constant on";
+    on();
+  }
+
   void handle()
   {
     if (mode == "blink")
@@ -107,6 +117,10 @@ public:
       {
         on();
       }
+    }
+    else if (mode == "constant on")
+    {
+      on();
     }
   }
 };
@@ -161,34 +175,48 @@ unsigned long reportNumberOfCountedPulses(const int reportInterval, unsigned lon
   return next_reporting_timestamp;
 }
 
-void setWifiLed(Led led, wl_status_t wifi_status)
+const String wl_status_to_string(wl_status_t status)
+{
+  switch (status)
+  {
+  case WL_NO_SHIELD:
+    return "WL_NO_SHIELD";
+  case WL_IDLE_STATUS:
+    return "WL_IDLE_STATUS";
+  case WL_NO_SSID_AVAIL:
+    return "WL_NO_SSID_AVAIL";
+  case WL_SCAN_COMPLETED:
+    return "WL_SCAN_COMPLETED";
+  case WL_CONNECTED:
+    return "WL_CONNECTED";
+  case WL_CONNECT_FAILED:
+    return "WL_CONNECT_FAILED";
+  case WL_CONNECTION_LOST:
+    return "WL_CONNECTION_LOST";
+  case WL_DISCONNECTED:
+    return "WL_DISCONNECTED";
+  }
+}
+
+Led setWifiLed(Led led, wl_status_t wifi_status)
 {
   if (wifi_status == WL_CONNECTED)
   {
-    // led_wifi_timestamp_off = shortlyActivateLed(LED_WIFI_PIN, 100000);
-    led.on();
+    led.constant_on();
   }
-  if (wifi_status != WL_CONNECTED)
+  else if (wifi_status == WL_DISCONNECTED)
   {
-    led.blink(100, 100, 20);
-    // if (led_wifi_is_on && led_wifi_timestamp_off < millis())
-    //   if (previous_wifi_status == WL_CONNECTED)
-    //   {
-    //     led_wifi_timestamp_off = millis();
-    //     led_wifi_timestamp_on = millis() + 200;
-    //   }
-    //   else if (led_wifi_is_on && led_wifi_timestamp_off < millis())
-    //   {
-    //     digitalWrite(LED_WIFI_PIN, HIGH);
-    //     led_wifi_is_on = false;
-    //   }
-    //   else if (!led_wifi_is_on && led_wifi_timestamp_on < millis())
-    //   {
-    //     digitalWrite(LED_WIFI_PIN, LOW);
-    //     led_wifi_is_on = true;
-    //   }
+    led.blink(200, 200, -1);
   }
-  // previous_wifi_status = wifi_status;
+  else if (wifi_status == WL_NO_SSID_AVAIL)
+  {
+    led.blink(100, 300, -1);
+  }
+  else
+  {
+    led.blink(50, 350, -1);
+  }
+  return led;
 }
 
 Led led_wifi(LED_WIFI_PIN);
@@ -198,8 +226,8 @@ void setup()
 {
   Serial.begin(74880);
   attachInterrupt(SENSOR_PIN, handlePulse, CHANGE);
-  // WiFi.persistent(false); // Switch off persistent mode, to avoid exception 3 when calling WiFi.begin()!!!
-  // WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.persistent(false); // Switch off persistent mode, to avoid exception 3 when calling WiFi.begin()
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
 void loop()
@@ -207,4 +235,14 @@ void loop()
   led_main = followUpPulse(led_main);
   next_reporting_timestamp = reportNumberOfCountedPulses(REPORTING_INTERVAL, next_reporting_timestamp);
   led_main.handle();
+  led_wifi.handle();
+  current_wifi_status = WiFi.status();
+  if (current_wifi_status != previous_wifi_status)
+  {
+    Serial.print("WIFI status: ");
+    Serial.println(wl_status_to_string(current_wifi_status));
+    led_wifi = setWifiLed(led_wifi, current_wifi_status);
+    previous_wifi_status = current_wifi_status;
+  }
+  WiFi.status();
 }
