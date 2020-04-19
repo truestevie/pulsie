@@ -139,6 +139,17 @@ Led followUpPulse(Led led) {
     return led;
 }
 
+Led followUpWifiStatus(Led led) {
+    current_wifi_status = WiFi.status();
+    if (current_wifi_status != previous_wifi_status) {
+        Serial.print("WIFI status: ");
+        Serial.println(wl_status_to_string(current_wifi_status));
+        led = setWifiLed(led, current_wifi_status);
+        previous_wifi_status = current_wifi_status;
+    }
+    return led;
+}
+
 unsigned long reportNumberOfCountedPulses(
     const int reportInterval,
     unsigned long next_reporting_timestamp) {
@@ -201,17 +212,11 @@ void setup() {
 
 void loop() {
     led_main = followUpPulse(led_main);
+    led_wifi = followUpWifiStatus(led_wifi);
     next_reporting_timestamp =
         reportNumberOfCountedPulses(
             REPORTING_INTERVAL, next_reporting_timestamp);
     led_main.handle();
     led_wifi.handle();
-    current_wifi_status = WiFi.status();
-    if (current_wifi_status != previous_wifi_status) {
-        Serial.print("WIFI status: ");
-        Serial.println(wl_status_to_string(current_wifi_status));
-        led_wifi = setWifiLed(led_wifi, current_wifi_status);
-        previous_wifi_status = current_wifi_status;
-    }
-    WiFi.status();
+
 }
