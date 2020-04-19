@@ -1,16 +1,20 @@
 #include <ESP8266WiFi.h>
-#include "config.h"
+
+#include "./config.h"
 
 const int LED_WIFI_PIN = 2;
 const int LED_MAIN_PIN = 16;
-const int SENSOR_PIN = 5; // D1 pin - Use external pull-up resistor
+const int SENSOR_PIN = 5;  // D1 pin - Use external pull-up resistor
 bool previous_level = true;
-volatile bool current_level = true; //Value changes in interrupt service routine, hence volatile
+
+// Values changes in interrupt service routine, hence volatile
+volatile bool current_level = true;
+volatile unsigned long end_debounce_timestamp;
+volatile bool waiting_for_debounce = false;
+
 int total_n_pulses_detected = 0;
 int previous_n_pulses_detected = 0;
 const int DEBOUNCE_TIME = CONFIG_DEBOUNCE_TIME;
-volatile unsigned long end_debounce_timestamp; //Value changes in interrupt service routine, hence volatile
-volatile bool waiting_for_debounce = false;    //Value changes in interrupt service routine, hence volatile
 unsigned long next_reporting_timestamp = 0;
 const int REPORTING_INTERVAL = CONFIG_REPORTING_INTERVAL;
 const String WIFI_SSID = CONFIG_WIFI_SSID;
@@ -18,231 +22,196 @@ const String WIFI_PASSWORD = CONFIG_WIFI_PASSWORD;
 wl_status_t previous_wifi_status = WL_DISCONNECTED;
 wl_status_t current_wifi_status;
 
-class Led
-{
-private:
-  byte pin;
-  String mode;
-  boolean isOn;
-  int on_duration;
-  int off_duration;
-  unsigned long switchOnAt;
-  unsigned long switchOffAt;
-  int remaining_number_of_blinks;
+class Led {
+   private:
+    byte pin;
+    String mode;
+    boolean isOn;
+    int on_duration;
+    int off_duration;
+    unsigned long switchOnAt;
+    unsigned long switchOffAt;
+    int remaining_number_of_blinks;
 
-public:
-  Led(byte ledPin)
-  {
-    pin = ledPin;
-    mode = "";
-    on_duration = 0;
-    off_duration = 0;
-    remaining_number_of_blinks = 0;
-    init();
-  }
-  void init()
-  {
-    pinMode(pin, OUTPUT);
-    off();
-  }
-  void on()
-  {
-    if (mode == "blink")
-    {
-      if (remaining_number_of_blinks > 0 || remaining_number_of_blinks == -1)
-      {
-        simplyOn();
-        switchOffAt = millis() + on_duration;
-      }
-    }
-    else
-    {
-      simplyOn();
-    }
-  }
-
-  void simplyOn()
-  {
-    digitalWrite(pin, LOW);
-    isOn = true;
-  }
-
-  void off()
-  {
-    digitalWrite(pin, HIGH);
-    isOn = false;
-
-    if (mode == "blink")
-    {
-      if (remaining_number_of_blinks != -1)
-      {
-        remaining_number_of_blinks--;
-      }
-      if (remaining_number_of_blinks > 0 || remaining_number_of_blinks == -1)
-      {
-        switchOnAt = millis() + off_duration;
-      }
-      else
-      {
+   public:
+    explicit Led(byte ledPin) {
+        pin = ledPin;
         mode = "";
-      }
+        on_duration = 0;
+        off_duration = 0;
+        remaining_number_of_blinks = 0;
+        init();
     }
-  }
-
-  void blink(int new_on_duration, int new_off_duration, int number_of_blinks)
-  {
-    // setMode("blink");
-    mode = "blink";
-    on_duration = new_on_duration;
-    off_duration = new_off_duration;
-    remaining_number_of_blinks = number_of_blinks;
-    on();
-  }
-
-  void constant_on()
-  {
-    mode = "constant on";
-    on();
-  }
-
-  void handle()
-  {
-    if (mode == "blink")
-    {
-      if (isOn && switchOffAt < millis())
-      {
+    void init() {
+        pinMode(pin, OUTPUT);
         off();
-      }
-      else if (!isOn && switchOnAt < millis())
-      {
+    }
+    void on() {
+        if (mode == "blink") {
+            if (remaining_number_of_blinks > 0 ||
+                remaining_number_of_blinks == -1) {
+                simplyOn();
+                switchOffAt = millis() + on_duration;
+            }
+        } else {
+            simplyOn();
+        }
+    }
+
+    void simplyOn() {
+        digitalWrite(pin, LOW);
+        isOn = true;
+    }
+
+    void off() {
+        digitalWrite(pin, HIGH);
+        isOn = false;
+
+        if (mode == "blink") {
+            if (remaining_number_of_blinks != -1) {
+                remaining_number_of_blinks--;
+            }
+            if (
+                remaining_number_of_blinks > 0 ||
+                remaining_number_of_blinks == -1) {
+                switchOnAt = millis() + off_duration;
+            } else {
+                mode = "";
+            }
+        }
+    }
+
+    void blink(
+        int new_on_duration,
+        int new_off_duration,
+        int number_of_blinks) {
+        mode = "blink";
+        on_duration = new_on_duration;
+        off_duration = new_off_duration;
+        remaining_number_of_blinks = number_of_blinks;
         on();
-      }
     }
-    else if (mode == "constant on")
-    {
-      on();
+
+    void constant_on() {
+        mode = "constant on";
+        on();
     }
-  }
+
+    void handle() {
+        if (mode == "blink") {
+            if (isOn && switchOffAt < millis()) {
+                off();
+            } else if (!isOn && switchOnAt < millis()) {
+                on();
+            }
+        } else if (mode == "constant on") {
+            on();
+        }
+    }
 };
 
-void ICACHE_RAM_ATTR handlePulse() //Interrupt service routine, hence add ICACHE_RAM_ATTR attribute
-{
-  current_level = digitalRead(SENSOR_PIN);
-  if (!waiting_for_debounce)
-  {
-    if (current_level != previous_level)
-    {
-      end_debounce_timestamp = millis() + DEBOUNCE_TIME;
-      waiting_for_debounce = true;
+// Interrupt service routine, hence add ICACHE_RAM_ATTR attribute
+void ICACHE_RAM_ATTR handlePulse() {
+    current_level = digitalRead(SENSOR_PIN);
+    if (!waiting_for_debounce) {
+        if (current_level != previous_level) {
+            end_debounce_timestamp = millis() + DEBOUNCE_TIME;
+            waiting_for_debounce = true;
+        }
     }
-  }
 }
 
-Led followUpPulse(Led led)
-{
-  if (waiting_for_debounce)
-  {
-    if (end_debounce_timestamp < millis())
-    {
-      current_level = digitalRead(SENSOR_PIN);
-      waiting_for_debounce = false;
-      if (current_level == LOW && previous_level == HIGH)
-      {
-        total_n_pulses_detected++;
-        led.blink(100, 100, 1);
-        // digitalWrite(LED_MAIN_PIN, LOW);
-        // led_n_is_on = true;
-        // led_main_timestamp_off = millis() + 100;
-      }
-      previous_level = current_level;
+Led followUpPulse(Led led) {
+    if (waiting_for_debounce) {
+        if (end_debounce_timestamp < millis()) {
+            current_level = digitalRead(SENSOR_PIN);
+            waiting_for_debounce = false;
+            if (current_level == LOW && previous_level == HIGH) {
+                total_n_pulses_detected++;
+                led.blink(100, 100, 1);
+                // digitalWrite(LED_MAIN_PIN, LOW);
+                // led_n_is_on = true;
+                // led_main_timestamp_off = millis() + 100;
+            }
+            previous_level = current_level;
+        }
     }
-  }
-  return led;
+    return led;
 }
 
-unsigned long reportNumberOfCountedPulses(const int reportInterval, unsigned long next_reporting_timestamp)
-{
-  if (next_reporting_timestamp < millis())
-  {
-    if (previous_n_pulses_detected != total_n_pulses_detected)
-    {
-      Serial.print("Total number of detected pulses: ");
-      Serial.println(total_n_pulses_detected);
+unsigned long reportNumberOfCountedPulses(
+    const int reportInterval,
+    unsigned long next_reporting_timestamp) {
+    if (next_reporting_timestamp < millis()) {
+        if (previous_n_pulses_detected != total_n_pulses_detected) {
+            Serial.print("Total number of detected pulses: ");
+            Serial.println(total_n_pulses_detected);
+        }
+        previous_n_pulses_detected = total_n_pulses_detected;
+        next_reporting_timestamp = millis() + reportInterval;
     }
-    previous_n_pulses_detected = total_n_pulses_detected;
-    next_reporting_timestamp = millis() + reportInterval;
-  }
-  return next_reporting_timestamp;
+    return next_reporting_timestamp;
 }
 
-const String wl_status_to_string(wl_status_t status)
-{
-  switch (status)
-  {
-  case WL_NO_SHIELD:
-    return "WL_NO_SHIELD";
-  case WL_IDLE_STATUS:
-    return "WL_IDLE_STATUS";
-  case WL_NO_SSID_AVAIL:
-    return "WL_NO_SSID_AVAIL";
-  case WL_SCAN_COMPLETED:
-    return "WL_SCAN_COMPLETED";
-  case WL_CONNECTED:
-    return "WL_CONNECTED";
-  case WL_CONNECT_FAILED:
-    return "WL_CONNECT_FAILED";
-  case WL_CONNECTION_LOST:
-    return "WL_CONNECTION_LOST";
-  case WL_DISCONNECTED:
-    return "WL_DISCONNECTED";
-  }
+const String wl_status_to_string(wl_status_t status) {
+    switch (status) {
+        case WL_NO_SHIELD:
+            return "WL_NO_SHIELD";
+        case WL_IDLE_STATUS:
+            return "WL_IDLE_STATUS";
+        case WL_NO_SSID_AVAIL:
+            return "WL_NO_SSID_AVAIL";
+        case WL_SCAN_COMPLETED:
+            return "WL_SCAN_COMPLETED";
+        case WL_CONNECTED:
+            return "WL_CONNECTED";
+        case WL_CONNECT_FAILED:
+            return "WL_CONNECT_FAILED";
+        case WL_CONNECTION_LOST:
+            return "WL_CONNECTION_LOST";
+        case WL_DISCONNECTED:
+            return "WL_DISCONNECTED";
+    }
 }
 
-Led setWifiLed(Led led, wl_status_t wifi_status)
-{
-  if (wifi_status == WL_CONNECTED)
-  {
-    led.constant_on();
-  }
-  else if (wifi_status == WL_DISCONNECTED)
-  {
-    led.blink(200, 200, -1);
-  }
-  else if (wifi_status == WL_NO_SSID_AVAIL)
-  {
-    led.blink(100, 300, -1);
-  }
-  else
-  {
-    led.blink(50, 350, -1);
-  }
-  return led;
+Led setWifiLed(Led led, wl_status_t wifi_status) {
+    if (wifi_status == WL_CONNECTED) {
+        led.constant_on();
+    } else if (wifi_status == WL_DISCONNECTED) {
+        led.blink(200, 200, -1);
+    } else if (wifi_status == WL_NO_SSID_AVAIL) {
+        led.blink(100, 300, -1);
+    } else {
+        led.blink(50, 350, -1);
+    }
+    return led;
 }
 
 Led led_wifi(LED_WIFI_PIN);
 Led led_main(LED_MAIN_PIN);
 
-void setup()
-{
-  Serial.begin(74880);
-  attachInterrupt(SENSOR_PIN, handlePulse, CHANGE);
-  WiFi.persistent(false); // Switch off persistent mode, to avoid exception 3 when calling WiFi.begin()
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+void setup() {
+    Serial.begin(74880);
+    attachInterrupt(SENSOR_PIN, handlePulse, CHANGE);
+    // Switch off persistent mode,
+    // to avoid exception 3 when calling WiFi.begin()
+    WiFi.persistent(false);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
-void loop()
-{
-  led_main = followUpPulse(led_main);
-  next_reporting_timestamp = reportNumberOfCountedPulses(REPORTING_INTERVAL, next_reporting_timestamp);
-  led_main.handle();
-  led_wifi.handle();
-  current_wifi_status = WiFi.status();
-  if (current_wifi_status != previous_wifi_status)
-  {
-    Serial.print("WIFI status: ");
-    Serial.println(wl_status_to_string(current_wifi_status));
-    led_wifi = setWifiLed(led_wifi, current_wifi_status);
-    previous_wifi_status = current_wifi_status;
-  }
-  WiFi.status();
+void loop() {
+    led_main = followUpPulse(led_main);
+    next_reporting_timestamp =
+        reportNumberOfCountedPulses(
+            REPORTING_INTERVAL, next_reporting_timestamp);
+    led_main.handle();
+    led_wifi.handle();
+    current_wifi_status = WiFi.status();
+    if (current_wifi_status != previous_wifi_status) {
+        Serial.print("WIFI status: ");
+        Serial.println(wl_status_to_string(current_wifi_status));
+        led_wifi = setWifiLed(led_wifi, current_wifi_status);
+        previous_wifi_status = current_wifi_status;
+    }
+    WiFi.status();
 }
