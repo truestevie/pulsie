@@ -1,4 +1,6 @@
+#include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
+#include <string.h>
 
 #include "./config.h"
 
@@ -21,6 +23,10 @@ const String WIFI_SSID = CONFIG_WIFI_SSID;
 const String WIFI_PASSWORD = CONFIG_WIFI_PASSWORD;
 wl_status_t previous_wifi_status = WL_DISCONNECTED;
 wl_status_t current_wifi_status;
+
+String DB_URL = INFLUXDB_URL;
+String DB_PAYLOAD_PREFIX = INFLUXDB_PAYLOAD_PREFIX;
+String DB_AUTHORIZATION = INFLUXDB_AUTHORIZATION;
 
 class Led {
    private:
@@ -146,17 +152,43 @@ Led followUpWifiStatus(Led led) {
         Serial.println(wl_status_to_string(current_wifi_status));
         led = setWifiLed(led, current_wifi_status);
         previous_wifi_status = current_wifi_status;
+        if (current_wifi_status == WL_CONNECTED) {
+            Serial.print("IP address: ");
+            Serial.println(WiFi.localIP());
+        }
     }
     return led;
+}
+
+void uploadToInfluxDb(int value) {
+    HTTPClient http;
+    http.begin(DB_URL);
+    http.addHeader("Content-type", "text:plain");
+    http.addHeader("Authorization", DB_AUTHORIZATION);
+    String payload = DB_PAYLOAD_PREFIX;
+    payload += value;
+    Serial.println(payload);
+    int httpCode = http.POST(payload);
+    Serial.print("Return code: ");
+    Serial.println(httpCode);
+    Serial.print("Response: ");
+    String response = http.getString();
+    Serial.println(response);
 }
 
 unsigned long reportNumberOfCountedPulses(
     const int reportInterval,
     unsigned long next_reporting_timestamp) {
     if (next_reporting_timestamp < millis()) {
-        if (previous_n_pulses_detected != total_n_pulses_detected) {
+        int intervalPulses =
+            total_n_pulses_detected - previous_n_pulses_detected;
+        if (intervalPulses > 0) {
             Serial.print("Total number of detected pulses: ");
             Serial.println(total_n_pulses_detected);
+            Serial.printf(
+                "Number of pulses during this interval: %d\n",
+                intervalPulses);
+            uploadToInfluxDb(intervalPulses);
         }
         previous_n_pulses_detected = total_n_pulses_detected;
         next_reporting_timestamp = millis() + reportInterval;
@@ -218,5 +250,4 @@ void loop() {
             REPORTING_INTERVAL, next_reporting_timestamp);
     led_main.handle();
     led_wifi.handle();
-
 }
