@@ -169,10 +169,11 @@ void uploadToInfluxDb(int value) {
     payload += value;
     Serial.println(payload);
     int httpCode = http.POST(payload);
+    String response = http.getString();
+    http.end();
     Serial.print("Return code: ");
     Serial.println(httpCode);
     Serial.print("Response: ");
-    String response = http.getString();
     Serial.println(response);
 }
 
