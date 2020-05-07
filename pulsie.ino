@@ -1,6 +1,10 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
 #include <string.h>
+// #include <ESPAsyncTCP.h>
+
+// AsyncClient* client = new AsyncClient;
+// client->onData(&handleDate, client);
 
 #include "./config.h"
 
@@ -27,6 +31,8 @@ wl_status_t current_wifi_status;
 String DB_URL = INFLUXDB_URL;
 String DB_PAYLOAD_PREFIX = INFLUXDB_PAYLOAD_PREFIX;
 String DB_AUTHORIZATION = INFLUXDB_AUTHORIZATION;
+
+const int HTTP_TIMEOUT = INFLUXDB_TIMEOUT;
 
 class Led {
    private:
@@ -160,26 +166,36 @@ Led followUpWifiStatus(Led led) {
     return led;
 }
 
-void uploadToInfluxDb(int value) {
+bool uploadToInfluxDb(int value, int httpTimeout) {
     HTTPClient http;
+    http.setTimeout(httpTimeout);
+    unsigned long httpStarted = millis();
     http.begin(DB_URL);
     http.addHeader("Content-type", "text:plain");
     http.addHeader("Authorization", DB_AUTHORIZATION);
     String payload = DB_PAYLOAD_PREFIX;
     payload += value;
+    Serial.print("Payload: ");
     Serial.println(payload);
-    int httpCode = http.POST(payload);
-    String response = http.getString();
+    int returnCode = http.POST(payload);
     http.end();
+    unsigned long httpEnded = millis();
     Serial.print("Return code: ");
-    Serial.println(httpCode);
-    Serial.print("Response: ");
-    Serial.println(response);
+    Serial.println(returnCode);
+    Serial.print("HTTP POST took ms: ");
+    Serial.println(httpEnded - httpStarted);
+    if (returnCode == 204) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 unsigned long reportNumberOfCountedPulses(
     const int reportInterval,
+    const int httpTimeout,
     unsigned long next_reporting_timestamp) {
+    bool uploadSucceeded = false;
     if (next_reporting_timestamp < millis()) {
         int intervalPulses =
             total_n_pulses_detected - previous_n_pulses_detected;
@@ -189,9 +205,11 @@ unsigned long reportNumberOfCountedPulses(
             Serial.printf(
                 "Number of pulses during this interval: %d\n",
                 intervalPulses);
-            uploadToInfluxDb(intervalPulses);
+            uploadSucceeded = uploadToInfluxDb(intervalPulses, httpTimeout);
         }
-        previous_n_pulses_detected = total_n_pulses_detected;
+        if (uploadSucceeded) {
+            previous_n_pulses_detected = total_n_pulses_detected;
+        }
         next_reporting_timestamp = millis() + reportInterval;
     }
     return next_reporting_timestamp;
@@ -248,7 +266,7 @@ void loop() {
     led_wifi = followUpWifiStatus(led_wifi);
     next_reporting_timestamp =
         reportNumberOfCountedPulses(
-            REPORTING_INTERVAL, next_reporting_timestamp);
+            REPORTING_INTERVAL, HTTP_TIMEOUT, next_reporting_timestamp);
     led_main.handle();
     led_wifi.handle();
 }
